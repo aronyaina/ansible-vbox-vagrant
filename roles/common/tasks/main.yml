@@ -1,0 +1,137 @@
+- name: Install packages that allow apt to be used over HTTPS
+  ansible.builtin.apt:
+    name: '{{ item.name }}'
+    state: present
+    update_cache: true
+  with_items: '{{ https_packages | default([]) }}'
+
+
+- name: Add new repositories keys
+  ansible.builtin.apt_key:
+    url: '{{ item.key }}'
+    state: present
+  with_items: "{{ gpg_keys | default([]) }}"
+
+
+- name: Add new apt repositories
+  ansible.builtin.apt_repository:
+    repo: '{{ item.repo }}'
+    state: present
+  with_items: "{{ repositories | default([]) }}"
+
+- name: Installing docker
+  ansible.builtin.apt:
+    name: "{{ item.name }}"
+    state: present
+    update_cache: true
+  with_items: "{{ docker_packages | default([]) }}"
+
+- name: Create containerd config file
+  ansible.builtin.file:
+    path: "/etc/modules-load.d/containerd.conf"
+    state: "touch"
+    mode: "0644"
+
+- name: Add config for containerd
+  ansible.builtin.blockinfile:
+    path: "/etc/modules-load.d/containerd.conf"
+    block: |
+          overlay
+          br_netfilter
+
+- name: Modprobe
+  ansible.builtin.shell: |
+          sudo modprobe overlay
+          sudo modprobe br_netfilter
+  changed_when: false
+
+
+- name: Set system configs for Kubernetes networking
+  ansible.builtin.file:
+    path: "/etc/sysctl.d/99-kubernetes-cri.conf"
+    state: "touch"
+    mode: "0644"
+
+- name: Add config for containerd
+  ansible.builtin.blockinfile:
+    path: "/etc/sysctl.d/99-kubernetes-cri.conf"
+    block: |
+          net.bridge.bridge-nf-call-iptables = 1
+          net.ipv4.ip_forward = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+
+- name: Configure containerd config
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+  with_items:
+    - { src: conf.toml, dest: /etc/containerd/config.toml }
+
+- name: Enable and start containerd
+  ansible.builtin.service:
+    name: containerd
+    state: restarted
+    enabled: true
+
+- name: Apply new settings
+  ansible.builtin.command: sudo sysctl --system
+  changed_when: false
+
+- name: Add vagrant user to docker group
+  ansible.builtin.user:
+    name: vagrant
+    group: docker
+
+
+- name: Remove swapfile from /etc/fstab
+  mount:
+    name: "{{ item }}"
+    fstype: swap
+    state: absent
+  with_items:
+    - swap
+    - none
+
+
+- name: Disable swap
+  ansible.builtin.command: swapoff -a
+  when: ansible_swaptotal_mb > 0
+  changed_when: false
+
+- name: Get Kubernetes package key
+  ansible.builtin.shell: curl -fsSL {{ k8s_url_apt_key }} | gpg --dearmor -o {{ k8s_gpgpath }}
+  args:
+    creates: "{{ k8s_gpgpath }}"
+
+- name: Install Kubernetes repository
+  ansible.builtin.apt_repository:
+    filename: kubernetes
+    repo: "deb [signed-by={{ k8s_gpgpath }}] {{ k8s_repository }} /"
+
+- name: Install Kubernetes Packages
+  ansible.builtin.package:
+    name: "{{ item.name }}"
+    state: present
+    update_cache: true
+    force: true
+    install_recommends: false
+  loop: "{{ k8s_packages }}"
+
+
+- name: Ensure /etc/default/kubelet exists
+  ansible.builtin.file:
+    path: /etc/default/kubelet
+    state: touch
+    mode: '0777'
+
+- name: Configure node ip
+  ansible.builtin.lineinfile:
+    path: /etc/default/kubelet
+    line: KUBELET_EXTRA_ARGS=--node-ip={{ node_ip }}
+
+- name: Restart kubelet
+  ansible.builtin.service:
+    name: kubelet
+    daemon_reload: true
+    state: restarted
+    enabled: true

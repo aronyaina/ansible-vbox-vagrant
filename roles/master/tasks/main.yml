@@ -1,0 +1,29 @@
+- name: Reset kubernetes adm
+  ansible.builtin.command: sudo kubeadm reset --force
+  changed_when: false
+
+- name: Initialize kubernetes cluster
+  ansible.builtin.command: sudo kubeadm init --apiserver-advertise-address="{{ node_ip }}" --apiserver-cert-extra-sans="{{ node_ip }}" --node-name="{{ node_name }}" --pod-network-cidr="{{ pod_network }}"
+  changed_when: false
+
+- name: Setup kubeconfig for vagrant user
+  ansible.builtin.command: "{{ item }}"
+  changed_when: false
+  with_items:
+    - mkdir -p /home/vagrant/.kube
+    - cp -i /etc/kubernetes/admin.conf /home/vagrant/.kube/config
+    - chown vagrant:docker /home/vagrant/.kube/config
+
+- name: Install flannel pod network
+  become: false
+  ansible.builtin.command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+  changed_when: false
+
+- name: Generate join command
+  ansible.builtin.command: kubeadm token create --print-join-command
+  changed_when: false
+  register: join_command
+
+- name: Copy join command to local file
+  become: false
+  local_action: copy content="{{ join_command.stdout_lines[0] }}" dest="./join-command"

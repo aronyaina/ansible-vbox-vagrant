@@ -1,0 +1,52 @@
+kubeadm init --apiserver-advertise-address=192.168.56.10 --apiserver-cert-extra-sans=192.168.56.10 --node-name=master --pod-network-cidr=192.168.100.0/16
+
+ansible.builtin.command: sudo kubeadm init --apiserver-advertise-address="{{ node_ip }}" --apiserver-cert-extra-sans="{{ node_ip }}" --node-name="{{ node_name }}" --pod-network-cidr="{{ pod_network }}"
+
+- name: Add config for containerd
+  ansible.builtin.blockinfile:
+    path: "/etc/modules-load.d/containerd.conf"
+    block: |
+          overlay
+          br_netfilter
+
+- name: Modprobe
+  ansible.builtin.shell: |
+          sudo modprobe overlay
+          sudo modprobe br_netfilter
+  changed_when: false
+
+
+- name: Set system configs for Kubernetes networking
+  ansible.builtin.file:
+    path: "/etc/sysctl.d/99-kubernetes-cri.conf"
+    state: "touch"
+    mode: "0644"
+
+- name: Add config for containerd
+  ansible.builtin.blockinfile:
+    path: "/etc/sysctl.d/99-kubernetes-cri.conf"
+    block: |
+          net.bridge.bridge-nf-call-iptables = 1
+          net.ipv4.ip_forward = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+
+- name: Apply new settings
+  ansible.builtin.command: sudo sysctl --system
+  changed_when: false
+
+- name: Create containerd config file
+  ansible.builtin.file:
+    path: "/etc/modules-load.d/containerd.conf"
+    state: "touch"
+    mode: "0644"
+- name: Verify if configuration file exists
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/kubernetes/manifests/kube-apiserver.yaml
+    - /etc/kubernetes/manifests/kube-controller-manager.yaml
+    - /etc/kubernetes/manifests/kube-scheduler.yaml
+    - /etc/kubernetes/manifests/etcd.yaml
+  register: config_file_result
+
+fatal: [master]: FAILED! => {"changed": false, "cmd": ["sudo", "kubeadm", "init", "--apiserver-advertise-address=192.168.56.10", "--apiserver-cert-extra-sans=192.168.56.10", "--node-name=master", "--pod-network-cidr=192.168.100.0/16"], "delta": "0:00:05.907500", "end": "2024-04-02 10:38:32.075460", "msg": "non-zero return code", "rc": 1, "start": "2024-04-02 10:38:26.167960", "stderr": "error execution phase preflight: [preflight] Some fatal errors occurred:\n\t[ERROR Port-10257]: Port 10257 is in use\n\t[ERROR FileAvailable--etc-kubernetes-manifests-kube-apiserver.yaml]: /etc/kubernetes/manifests/kube-apiserver.yaml already exists\n\t[ERROR FileAvailable--etc-kubernetes-manifests-kube-controller-manager.yaml]: /etc/kubernetes/manifests/kube-controller-manager.yaml already exists\n\t[ERROR FileAvailable--etc-kubernetes-manifests-kube-scheduler.yaml]: /etc/kubernetes/manifests/kube-scheduler.yaml already exists\n\t[ERROR FileAvailable--etc-kubernetes-manifests-etcd.yaml]: /etc/kubernetes/manifests/etcd.yaml already exists\n\t[ERROR Port-10250]: Port 10250 is in use\n\t[ERROR Port-2379]: Port 2379 is in use\n\t[ERROR Port-2380]: Port 2380 is in use\n\t[ERROR DirAvailable--var-lib-etcd]: /var/lib/etcd is not empty\n[preflight] If you know what you are doing, you can make a check non-fatal with `--ignore-preflight-errors=...`\nTo see the stack trace of this error execute with --v=5 or higher", "stderr_lines": ["error execution phase preflight: [preflight] Some fatal errors occurred:", "\t[ERROR Port-10257]: Port 10257 is in use", "\t[ERROR FileAvailable--etc-kubernetes-manifests-kube-apiserver.yaml]: /etc/kubernetes/manifests/kube-apiserver.yaml already exists", "\t[ERROR FileAvailable--etc-kubernetes-manifests-kube-controller-manager.yaml]: /etc/kubernetes/manifests/kube-controller-manager.yaml already exists", "\t[ERROR FileAvailable--etc-kubernetes-manifests-kube-scheduler.yaml]: /etc/kubernetes/manifests/kube-scheduler.yaml already exists", "\t[ERROR FileAvailable--etc-kubernetes-manifests-etcd.yaml]: /etc/kubernetes/manifests/etcd.yaml already exists", "\t[ERROR Port-10250]: Port 10250 is in use", "\t[ERROR Port-2379]: Port 2379 is in use", "\t[ERROR Port-2380]: Port 2380 is in use", "\t[ERROR DirAvailable--var-lib-etcd]: /var/lib/etcd is not empty", "[preflight] If you know what you are doing, you can make a check non-fatal with `--ignore-preflight-errors=...`", "To see the stack trace of this error execute with --v=5 or higher"], "stdout": "[init] Using Kubernetes version: v1.29.3\n[preflight] Running pre-flight checks", "stdout_lines": ["[init] Using Kubernetes version: v1.29.3", "[preflight] Running pre-flight checks"]
